@@ -293,5 +293,7 @@ check_occurrence_calculation(StartTime, CronExpression, NextTime) ->
   ?assertEqual(NextTime, crontab_schedule:get_next_occurrence(Cron, StartTime)).
 
 % get_next_occurrence_after_ms tests
-%should_calculate_next_occurrence_in_milliseconds_test() ->
-%  ?assertEqual(60000, crontab_schedule:get_next_occurrence_after_ms({all, all, all, all, all}, {{2000,1,1},{0,0,0}})).
+should_calculate_next_occurrence_in_milliseconds_test() ->
+  ?assertEqual(60000, crontab_schedule:get_next_occurrence_after_ms({all, all, all, all, all}, {{2000,1,1},{0,0,0}})),
+  ?assertEqual(60 * 60000, crontab_schedule:get_next_occurrence_after_ms({all, [1], all, all, all}, {{2000,1,1},{0,0,0}})),
+  ?assertEqual(24 * 60 * 60000, crontab_schedule:get_next_occurrence_after_ms({all, all, [2], all, all}, {{2000,1,1},{0,0,0}})).
