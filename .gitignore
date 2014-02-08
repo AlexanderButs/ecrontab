@@ -1,4 +1,8 @@
 .eunit
+.idea
+ebin
+ecrontab.iml
+out
 deps
 *.o
 *.beam

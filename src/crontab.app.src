@@ -1,0 +1,15 @@
+{application, crontab,
+ [
+  {description, ""},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod,
+    {crontab_schedule, []},
+    {crontab_schedule_tests, []}
+  },
+  {env, []}
+ ]}.
