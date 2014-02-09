@@ -142,9 +142,6 @@ should_parse_just_numbers_test() ->
   ?assertEqual({[10], [20], [30], [6], [4]}, crontab_schedule:parse("10 20 30 6 4")).
 
 % get_next_occurrence tests
-%test_test() ->
-%  check_occurrence_calculation({{2003,9,1},{23,45,0}}, "45 16 1 * Mon", {{2003,12,1},{16,45,0}}).
-
 should_calculate_next_occurrence_test() ->
   check_occurrence_calculation({{2003,1,1},{0,0,0}}, "* * * * *", {{2003,1,1},{0,1,0}}),
   check_occurrence_calculation({{2003,1,1},{0,1,0}}, "* * * * *", {{2003,1,1},{0,2,0}}),
@@ -297,3 +294,12 @@ should_calculate_next_occurrence_in_milliseconds_test() ->
   ?assertEqual(60000, crontab_schedule:get_next_occurrence_after_ms({all, all, all, all, all}, {{2000,1,1},{0,0,0}})),
   ?assertEqual(60 * 60000, crontab_schedule:get_next_occurrence_after_ms({all, [1], all, all, all}, {{2000,1,1},{0,0,0}})),
   ?assertEqual(24 * 60 * 60000, crontab_schedule:get_next_occurrence_after_ms({all, all, [2], all, all}, {{2000,1,1},{0,0,0}})).
+
+should_calculate_next_occurrances_test() ->
+  check_occurrences_calculation({{2004,1,1},{0,0,0}}, {{2004,1,1},{0,5,0}},
+                                "* * * * *",
+                                [{{2004,1,1},{0,1,0}}, {{2004,1,1},{0,2,0}}, {{2004,1,1},{0,3,0}}, {{2004,1,1},{0,4,0}}, {{2004,1,1},{0,5,0}}]).
+
+check_occurrences_calculation(StartTime, EndTime, CronExpression, NextTimeList) ->
+  Cron = crontab_schedule:parse(CronExpression),
+  ?assertEqual(NextTimeList, crontab_schedule:get_next_occurrences(Cron, StartTime, EndTime)).

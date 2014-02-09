@@ -5,12 +5,14 @@
 -export([
   parse/1,
   get_next_occurrence/2,
-  get_next_occurrence_after_ms/2
+  get_next_occurrence_after_ms/2,
+  get_next_occurrences/3
 ]).
 
 -define(DAY_IN_SECONDS, 86400).
 -define(HOUR_IN_SECONDS, 3600).
 -define(MINUTE_IN_SECONDS, 60).
+-define(DATETIME_MAX_VALUE, {{9999, 31, 12}, {23, 59, 59}}).
 
 parse("") ->
   throw(empty_string);
@@ -27,24 +29,28 @@ parse_fields(Fields) when length(Fields) == 5 ->
 parse_fields(_Fields) ->
   throw(invalid_fields_count).
 
+get_field_spec(minute = _FieldName) ->
+  {minute, 0, 59, []};
+get_field_spec(hour = _FieldName) ->
+  {hour, 0, 23, []};
+get_field_spec(day = _FieldName) ->
+  {day, 1, 31, []};
+get_field_spec(month = _FieldName) ->
+  {month, 1, 12, ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]};
+get_field_spec(day_of_week = _FieldName) ->
+  {day_of_week, 0, 6, ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]}.
+
 parse_field(_, "*") ->
   all;
-parse_field(minute, Field) ->
-  parse_field({minute, 0, 59, []}, Field);
-parse_field(hour, Field) ->
-  parse_field({hour, 0, 23, []}, Field);
-parse_field(day, Field) ->
-  parse_field({day, 1, 31, []}, Field);
-parse_field(month, Field) ->
-  parse_field({month, 1, 12, ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]}, Field);
-parse_field(day_of_week, Field) ->
-  parse_field({day_of_week, 0, 6, ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]}, Field);
-parse_field(FieldSpec, Field) ->
+parse_field(FieldName, Field) ->
+  FieldSpec = get_field_spec(FieldName),
+  parse_field_impl(FieldSpec, Field).
+parse_field_impl(FieldSpec, Field) ->
   CommaIndex = string:chr(Field, $,),
   if
     CommaIndex > 1 ->
       FieldValues = string:tokens(Field, ","),
-      FieldValuesParsed = [parse_field(FieldSpec, F) || F <- FieldValues],
+      FieldValuesParsed = [parse_field_impl(FieldSpec, F) || F <- FieldValues],
       lists:append(FieldValuesParsed);
     true ->
       SlashIndex = string:chr(Field, $/),
@@ -127,111 +133,166 @@ generate_field_values(Start, End, Interval, FieldSpec)
 generate_field_values(Start, End, Interval, _FieldSpec) ->
   lists:seq(Start, End, Interval).
 
-get_next_occurrence_after_ms(Schedule, Now) ->
-  NextOccurrence = get_next_occurrence(Schedule, Now),
-  NowSeconds = calendar:datetime_to_gregorian_seconds(Now),
+get_next_occurrences(Schedule, BaseDatetime, EndDateTime) ->
+  get_next_occurrences(Schedule, BaseDatetime, EndDateTime, []).
+get_next_occurrences(Schedule, BaseDatetime, EndDateTime, Acc)
+  when BaseDatetime < EndDateTime ->
+  Next = get_next_occurrence(Schedule, BaseDatetime, EndDateTime),
+  get_next_occurrences(Schedule, Next, EndDateTime, Acc ++ [Next]);
+get_next_occurrences(_Schedule, _BaseDatetime, _EndDateTime, Acc)  ->
+  Acc.
+
+get_next_occurrence_after_ms(Schedule, BaseDatetime) ->
+  NextOccurrence = get_next_occurrence(Schedule, BaseDatetime),
+  NowSeconds = calendar:datetime_to_gregorian_seconds(BaseDatetime),
   NextSeconds = calendar:datetime_to_gregorian_seconds(NextOccurrence),
   (NextSeconds - NowSeconds) * 1000.
 
-get_next_occurrence(Schedule, Now) ->
-  DateTime1 = advance_seconds(Now, ?MINUTE_IN_SECONDS),
-  {{Y, Mo, D}, {H, M, _}} = DateTime1,
-  DateTime2 = {{Y, Mo, D}, {H, M, 0}},
-  get_next_occurrence(not_done, Schedule, DateTime2).
+get_next_occurrence(Schedule, BaseDatetime) ->
+  get_next_occurrence(Schedule, BaseDatetime, ?DATETIME_MAX_VALUE).
 
-get_next_occurrence(done, _, DateTime) ->
-  DateTime;
-get_next_occurrence(not_done, Schedule, DateTime) ->
-  {MinuteSpec, HourSpec, DayOfMonthSpec, MonthSpec, DayOfWeekSpec} =
-    Schedule,
-  {{Year, Month, Day},  {Hour, Minute, _}} = DateTime,
-  {Done, Time} =
-    case value_valid(MonthSpec, 1, 12, Month) of
-      false ->
-        case Month of
-          12 ->
-            {not_done, {{Year + 1, 1, 1}, {0, 0, 0}}};
-          Month ->
-            {not_done, {{Year, Month + 1, 1}, {0, 0, 0}}}
-        end;
-      true ->
-        DayOfWeek = case calendar:day_of_the_week(Year, Month, Day) of
-                      7 ->
-                        0; % we want 0 to be Sunday not 7
-                      DOW ->
-                        DOW
-                    end,
-        DOMValid = value_valid(DayOfMonthSpec, 1, 31, Day),
-        DOWValid = value_valid(DayOfWeekSpec, 0, 6, DayOfWeek),
-        case (((DayOfMonthSpec /= all) and
-               (DayOfWeekSpec /= all) and
-               (DOMValid and DOWValid)) or (DOMValid and DOWValid)) of
-          false ->
-            Temp1 = advance_seconds(DateTime, ?DAY_IN_SECONDS),
-            {{Y, M, D}, {_, _, _}} = Temp1,
-            {not_done, {{Y, M, D}, {0, 0, 0}}};
-          true ->
-            case value_valid(HourSpec, 0, 23, Hour) of
-              false ->
-                Temp3 = advance_seconds(DateTime,
-                  ?HOUR_IN_SECONDS),
-                {{Y, M, D}, {H, _, _}} = Temp3,
-                {not_done, {{Y, M, D}, {H, 0, 0}}};
-              true ->
-                case value_valid(
-                  MinuteSpec, 0, 59, Minute) of
-                  false ->
-                    {not_done, advance_seconds(
-                      DateTime,
-                      ?MINUTE_IN_SECONDS)};
-                  true ->
-                    {done, DateTime}
-                end
-            end
-        end
-    end,
-  get_next_occurrence(Done, Schedule, Time).
+get_next_occurrence(Schedule, BaseDatetime, EndDateTime) ->
+  ScheduleList = erlang:tuple_to_list(Schedule),
+  FieldsZipped = lists:zip(ScheduleList, [minute, hour, day, month, day_of_week]),
+  ScheduleWithSpecList = [{get_field_spec(FieldName), FieldSchedule} || {FieldSchedule, FieldName} <- FieldsZipped],
+  ScheduleWithSpec = erlang:list_to_tuple(ScheduleWithSpecList),
+  get_next_occurrences_impl1(ScheduleWithSpec, BaseDatetime, EndDateTime).
+get_next_occurrences_impl1(Schedule,
+                           {BaseDate, {BaseHour, BaseMinute, _}} = BaseDatetime,
+                           EndDateTime) ->
+  get_next_occurrences_impl2(Schedule, BaseDatetime, EndDateTime, {BaseDate, {BaseHour, BaseMinute + 1, 0}}).
 
-value_valid(Spec, Min, Max, Value) when Value >= Min, Value =< Max->
-  case Spec of
-    all ->
-      true;
-    Spec ->
-      ValidValues = extract_integers(Spec, Min, Max),
-      lists:any(fun(Item) ->
-        Item == Value
-      end, ValidValues)
+get_next_occurrences_impl2(Schedule, BaseDatetime, EndDatetime, Datetime) ->
+  DatetimeMin = get_next_occurrences_impl2_min(Schedule, BaseDatetime, EndDatetime, Datetime),
+  DatetimeHour = get_next_occurrences_impl2_hour(Schedule, BaseDatetime, EndDatetime, DatetimeMin),
+  get_next_occurrences_impl3(Schedule, BaseDatetime, EndDatetime, DatetimeHour).
+get_next_occurrences_impl3(Schedule, BaseDatetime, EndDatetime, Datetime) ->
+  DatetimeDay = get_next_occurrences_impl2_day(Schedule, BaseDatetime, EndDatetime, Datetime),
+  DatetimeMonth = get_next_occurrences_impl2_month(Schedule, BaseDatetime, EndDatetime, DatetimeDay),
+  case check_month_day(Schedule, BaseDatetime, EndDatetime, DatetimeMonth) of
+    true ->
+      {{DatetimeMonthYear, DatetimeMonthMonth, _}, DatetimeMonthTime} = DatetimeMonth,
+      DatetimeMonthChanged = {{DatetimeMonthYear, DatetimeMonthMonth, -1}, DatetimeMonthTime},
+      get_next_occurrences_impl3(Schedule, BaseDatetime, EndDatetime, DatetimeMonthChanged);
+    false ->
+      get_next_occurrences_impl4(Schedule, BaseDatetime, EndDatetime, DatetimeMonth);
+    end_date ->
+      EndDatetime
   end.
 
-advance_seconds(DateTime, Seconds) ->
-  Seconds1 = calendar:datetime_to_gregorian_seconds(DateTime) + Seconds,
-  calendar:gregorian_seconds_to_datetime(Seconds1).
+get_next_occurrences_impl4(_Schedule, _BaseDatetime, EndDatetime, Datetime)
+  when Datetime >= EndDatetime ->
+  EndDatetime;
+get_next_occurrences_impl4({_, _, _, _, DayOfWeekSpec} = Schedule,
+                            _BaseDatetime, EndDatetime,
+                            {Date, _} = Datetime) ->
+  DayOfWeek = get_day_of_week(Date),
+  case spec_contains(DayOfWeek, DayOfWeekSpec) of
+    true ->
+      Datetime;
+    _ ->
+      get_next_occurrences_impl1(Schedule, {Date, {23, 59, 0}}, EndDatetime)
+  end.
 
-extract_integers(Spec, Min, Max) when Min < Max ->
-  extract_integers(Spec, Min, Max, []).
+get_next_occurrences_impl2_min({MinuteSpec, _, _, _, _} = _Schedule,
+                               _BaseDatetime, _EndDateTime,
+                               {Date, {Hour, Minute, _}} = _Datetime) ->
+  NextMinute = next_value(Minute, MinuteSpec),
+  case NextMinute of
+    -1 ->
+      {Date, {Hour + 1, first_value(MinuteSpec), 0}};
+    _ ->
+      {Date, {Hour, NextMinute, 0}}
+  end.
+get_next_occurrences_impl2_hour({MinuteSpec, HourSpec, _, _, _} = _Schedule,
+                                {_, {BaseHour, _, _}} = _BaseDatetime,
+                                _EndDateTime,
+                                {{Year, Month, Day} = Date, {Hour, Minute, _}} = _Datetime) ->
+  NextHour = next_value(Hour, HourSpec),
+  if
+    NextHour == -1 ->
+      {{Year, Month, Day + 1}, {first_value(HourSpec), first_value(MinuteSpec), 0}};
+    NextHour > BaseHour ->
+      {{Year, Month, Day}, {NextHour, first_value(MinuteSpec), 0}};
+    true ->
+      {Date, {NextHour, Minute, 0}}
+  end.
+get_next_occurrences_impl2_day({MinuteSpec, HourSpec, DaySpec, _, _} = _Schedule,
+                               {{_, _, BaseDay}, _} = _BaseDatetime,
+                               _EndDateTime,
+                               {{Year, Month, Day}, {Hour, Minute, _}} = _Datetime) ->
+  NextDay =
+  if
+    Day == -1 ->
+      Day;
+    true ->
+      next_value(Day, DaySpec)
+  end,
+  if
+    NextDay == -1 ->
+      {{Year, Month + 1, first_value(DaySpec)}, {first_value(HourSpec), first_value(MinuteSpec), 0}};
+    NextDay > BaseDay ->
+      {{Year, Month, NextDay}, {first_value(HourSpec), first_value(MinuteSpec), 0}};
+    true ->
+      {{Year, Month, NextDay}, {Hour, Minute, 0}}
+  end.
+get_next_occurrences_impl2_month({MinuteSpec, HourSpec, DaySpec, MonthSpec, _} = _Schedule,
+                                 {{_, BaseMonth, _}, _} = _BaseDatetime,
+                                 _EndDateTime,
+                                 {{Year, Month, Day}, {Hour, Minute, _}} = _Datetime) ->
+  NextMonth = next_value(Month, MonthSpec),
+  if
+    NextMonth ==  -1 ->
+      {{Year + 1, first_value(MonthSpec), first_value(DaySpec)}, {first_value(HourSpec), first_value(MinuteSpec), 0}};
+    NextMonth > BaseMonth ->
+      {{Year, NextMonth, first_value(DaySpec)}, {first_value(HourSpec), first_value(MinuteSpec), 0}};
+    true ->
+      {{Year, NextMonth, Day}, {Hour, Minute, 0}}
+  end.
+check_month_day(_Schedule,
+                {{BaseYear, BaseMonth, BaseDay}, _} = _BaseDatetime,
+                {{EndYear, EndMonth, EndDay}, _} = _EndDateTime,
+                {{Year, Month, Day}, _} = _Datetime)
+  when Day > 28 andalso (Day /= BaseDay orelse Month /= BaseMonth orelse Year /= BaseYear) ->
+  LastDay = calendar:last_day_of_the_month(Year, Month),
+  if
+    Day > LastDay ->
+      if
+        Year >= EndYear andalso Month >= EndMonth andalso Day >= EndDay ->
+          end_date;
+        true ->
+          true
+      end;
+    true ->
+      false
+  end;
+check_month_day(_Schedule, _BaseDatetime, _EndDateTime, _Datetime) ->
+  false.
 
-extract_integers([], Min, Max, Acc) ->
-  Integers = lists:sort(sets:to_list(sets:from_list(lists:flatten(Acc)))),
-  lists:foreach(fun(Int) ->
-    if
-      Int < Min ->
-        throw({error, {out_of_range, {min, Min},
-          {value, Int}}});
-      Int > Max ->
-        throw({error, {out_of_range, {max, Max},
-          {value, Int}}});
-      true ->
-        ok
-    end
-  end, Integers),
-  Integers;
-extract_integers(Spec, Min, Max, Acc) ->
-  [H|T] = Spec,
-  Values = case H of
-             Integer when is_integer(Integer) ->
-               [Integer]
-           end,
-  extract_integers(T, Min, Max, [Values|Acc]).
+next_value(Start, {{_, FieldMinValue, _, _}, _} = _ValueSpec)
+  when Start < FieldMinValue ->
+  FieldMinValue;
+next_value(Start, {{_, FieldMinValue, FieldMaxValue, _} = FieldSpec, all} = _ValueSpec) ->
+  next_value(Start, {FieldSpec, lists:seq(FieldMinValue, FieldMaxValue)});
+next_value(_Start, {_, []} = _ValueSpec) ->
+  -1;
+next_value(Start, {_, [Start | _T]} = _ValueSpec) ->
+  Start;
+next_value(Start, {_, [H | _T]} = _ValueSpec)
+  when Start < H->
+  H;
+next_value(Start, {FieldSpec, FieldValues} = _ValueSpec) ->
+  FieldValuesGreater = lists:dropwhile(fun(FieldValue) -> FieldValue < Start end, FieldValues),
+  next_value(Start, {FieldSpec, FieldValuesGreater});
+next_value(_Start, _ValueSpec) ->
+  -1.
+
+first_value({{_, FieldMinValue, _, _}, all} = _ValueSpec) ->
+  FieldMinValue;
+first_value({_, []} = ValueSpec) ->
+  throw({bad_field, ValueSpec});
+first_value({_, [H | _T]} = _ValueSpec) ->
+  H.
 
 list_search(Fun, List) ->
   list_search(Fun, 1, List).
@@ -247,3 +308,16 @@ list_search(Fun, IndexAcc, [H | T]) ->
 
 is_prefix(Source, Prefix) ->
   string:str(Source, Prefix) == 1.
+
+get_day_of_week(Date) ->
+  case calendar:day_of_the_week(Date) of
+    7 ->
+      0;
+    DayOfWeek ->
+      DayOfWeek
+  end.
+
+spec_contains(_, {_, all}) ->
+  true;
+spec_contains(Value, {_, Values}) ->
+  lists:member(Value, Values).
